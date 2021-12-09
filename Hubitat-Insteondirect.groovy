@@ -1,4 +1,4 @@
- /**
+/**
  *  Insteon Direct Dimmer/Switch
  *  Original Author     : ethomasii@gmail.com
  *  Creation Date       : 2013-12-08
@@ -15,7 +15,10 @@
  *  Added Fast ON/OFF & Refresh setting in driver by     @cwwilson08   
  *  Last Modified Date  : 2018-09-14
  * 
+ *  Added support for Express server for checking status @microbmen
+ *
  *  Changelog:
+ *  2021-12-09: adjusted for status to be recieved from express server :3000
  *  2018-10-06: Removed auto refresh in driver - Too many issues
  *  2018-10-01: Added ability to disable auto refresh in driver
  *  2018-09-14: Added Fast ON/OFF & Refresh setting in driver
@@ -30,7 +33,7 @@
 import groovy.json.JsonSlurper
 
 metadata {
-    definition (name: "Insteon direct dimmer/switch", namespace: "cw", author: "cwwilson08") {
+    definition (name: "Insteon direct dimmer/switch (express status)", namespace: "MM", author: "microbmen") {
         capability "Switch Level"
         capability "Switch"
         capability "Refresh"
@@ -41,8 +44,6 @@ def fon = [:]
     fon << ["true" : "True"]
     fon << ["false" : "False"]
 
-
-
 preferences {
     input("deviceid", "text", title: "Device ID", description: "Your Insteon device.  Do not include periods example: FF1122.")
     input("host", "text", title: "URL", description: "The URL of your Hub (without http:// example: my.hub.com ")
@@ -50,11 +51,10 @@ preferences {
     input("username", "text", title: "Username", description: "The hub username (found in app)")
     input("password", "text", title: "Password", description: "The hub password (found in app)")
     input(name: "fastOn", type: "enum", title: "FastOn", options: fon, description: "Use FastOn/Off?", required: true)
+    input("expressserver", "text", title: "Express Server", description: "The IP of you Express Server")
+    input("expressport", "text", title: "Express Port", description: "The port of your Express Server (ex. 3000)")
 } 
  
-
-
-
 // Not in use
 def parse(String description) {
 }
@@ -79,9 +79,7 @@ def off() {
     } else {
         sendCmd("14", "00")
     }
-}
-                
-                
+}                    
                   
 def setLevel(value) {
 
@@ -98,7 +96,7 @@ def setLevel(value) {
         sendEvent(name: "switch", value: "off")
     }
     // log.debug "dimming value is $valueaux"
-    log.debug "dimming to $level"
+    log.debug "setLevet(x) - dimming to ${level}. with value: ${value}"
     dim(level,value)
 }
 
@@ -117,7 +115,7 @@ def setLevel(value,rate) {
         sendEvent(name: "switch", value: "off")
     }
     // log.debug "dimming value is $valueaux"
-    log.debug "dimming to $level"
+    log.debug "setLevel(x,y) - dimming to ${level}. with value: ${value} and rate ${rate} (rate not supported)"
     dim(level,value)
 }
 
@@ -139,6 +137,7 @@ def sendCmd(num, level)
         
         // log.debug content
     }
+    
     log.debug "Command Completed"
 }
 
@@ -157,69 +156,42 @@ def updated() {}
        
 
 def getStatus() {
-	def params = [
-        uri: "http://${settings.username}:${settings.password}@${settings.host}:${settings.port}/3?0262${settings.deviceid}0F1900=I=3"
-    ]
-    
-    try {
-        httpPost(params) {
-            
-            log.debug "commandsent"
-        }
-    } catch (e) {
-        log.error "something went wrong: $e"
-    }
     def buffer_status = runIn(2, getBufferStatus)
 }
 
 def getBufferStatus() {
-    
-    
-	def buffer = ""
+    def buffer = ""
 	def params = [
-        uri: "http://${settings.username}:${settings.password}@${settings.host}:${settings.port}/buffstatus.xml"
+         uri: "http://${settings.expressserver}:${settings.expressport}/light/${settings.deviceid}/status"    
     ]
+   
+    log.debug "getBufferStatus URI: ${params}"
     
     try {
-        httpPost(params) {resp ->
-            buffer = "${resp.responseData}"
-            log.debug "Buffer: ${resp.responseData}"
-        }
+        httpGet(params) {resp ->
+            buffer = "${resp.data}"
+            log.debug "Buffer: ${buffer}"
+       }
     } catch (e) {
-        log.error "something went wrong: $e"
+        log.error "something went wrong when getting the response: $e"
+        return 1
     }
 
-	def buffer_end = buffer.substring(buffer.length()-2,buffer.length())
-	def buffer_end_int = Integer.parseInt(buffer_end, 16)
-    
-    def parsed_buffer = buffer.substring(0,buffer_end_int)
-    log.debug "ParsedBuffer: ${parsed_buffer}"
-    
-    def responseID = parsed_buffer.substring(22,28)
-    
-if (responseID == settings.deviceid) {
-            log.debug "Response is for correct device: ${responseID}"
-            def status = parsed_buffer.substring(38,40)
-            log.debug "Status: ${status}"
-    		
-            def level = Math.round(Integer.parseInt(status, 16)*(100/255))
-            log.debug "Level: ${level}"
-            
-            if (level == 0) {
-                log.debug "Device is off..."
-                sendEvent(name: "switch", value: "off")
-                sendEvent(name: "level", value: level, unit: "%")
-                
-                }
-
-            else if (level > 0) {
-                log.debug "Device is on..."
-                sendEvent(name: "switch", value: "on")
-                sendEvent(name: "level", value: level, unit: "%")
-                
-            }
-        } else {
-        	log.debug "Response is for wrong device - trying again"
-            getStatus()
-        }
-    }
+     def status = buffer.substring(7,buffer.length()-1)
+     log.debug "Status: ${status}"
+ 		
+     //def level = Math.round(Integer.parseInt(status, 16)*(100/255))
+     def level = Integer.parseInt(status, 10)
+     log.debug "Level: ${level}"
+          
+     if (level == 0) {
+     log.debug "Device is off..."
+     sendEvent(name: "switch", value: "off")
+     sendEvent(name: "level", value: level, unit: "%")
+     }
+     else if (level > 0) {
+     log.debug "Device is on..."
+     sendEvent(name: "switch", value: "on")
+     sendEvent(name: "level", value: level, unit: "%")
+     }
+}
