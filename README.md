@@ -1,6 +1,9 @@
 # Insteon-Hubitat
 
-Hubitat driver for direct control of insteon devices
+Hubitat driver for direct local control of insteon devices
+
+Add new virtual device --> use this device driver --> point to your insteon hub in the device settings, user/pass.
+
 
 Updated the code to use Express Server for Insteon status.  Works great if you are using Homebridge and the Insteon Local plugin which has the express server running. Just point to your Homebridge server on port 3000 and status will work.
 
